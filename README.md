@@ -5,6 +5,7 @@
 ![License](https://img.shields.io/badge/license-MIT-orange.svg)
 
 **Legal RAG Chatbot** คือแชทบอทตอบคำถามกฎหมายไทย โดยใช้เทคนิค **Retrieval-Augmented Generation (RAG)** ซึ่งผสมผสานความสามารถของ *การค้นหา* และ *การสรุปด้วย AI*
+**สามารถทดสอบโมเดลของเราได้ที่ https://huggingface.co/DuckerMaster/thai-legal-lora **
 
 ## ✨ Features
 
@@ -143,8 +144,6 @@ legal-rag-chatbot/
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-
 
 ---
 
