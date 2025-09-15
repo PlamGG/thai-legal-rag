@@ -1,0 +1,11 @@
+datasets
+sentence-transformers
+faiss-cpu  
+torch
+transformers
+peft
+accelerate
+bitsandbytes
+chromadb
+rank-bm25
+tqdm
