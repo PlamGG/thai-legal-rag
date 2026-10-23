@@ -161,7 +161,7 @@ print(tokenizer.decode(outputs[0], skip_special_tokens=True).split("คำตอ
 ```bash
 python app.py
 ```
-เปิดเบราว์เซอร์ไปที่ `http://127.0.0.1:7860` ระบบจะดึง LoRA Adapter จาก Hugging Face (`DuckerMaster/thai-legal-lora`) มาให้อัตโนมัติ พร้อมใช้งานทันที
+เปิดเบราว์เซอร์ไปที่ `http://127.0.0.1:7860` ระบบจะโหลด LoRA Adapter จากโฟลเดอร์ภายในเครื่อง (`./data/trained_lora_model`) โดยอัตโนมัติ (หรือดาวน์โหลดจาก Hugging Face Hub `DuckerMaster/thai-legal-lora` หากไม่พบไฟล์ในเครื่อง) พร้อมใช้งานทันทีแบบ Offline
 
 ---
 
@@ -188,18 +188,22 @@ python app.py
 
 ```text
 thai-legal-rag/
-├── data/                       # โฟลเดอร์เก็บข้อมูล (Indexed locally, not in Git)
-│   ├── passages.pkl            # คลังข้อความกฎหมาย 4,545 มาตรา
-│   ├── chroma_db/              # ChromaDB Vector Store
-│   └── trained_lora_model/     # LoRA Adapter Weights
-├── build_index.py              # สคริปต์คำนวณ Embedding และสร้างดัชนี
-├── data_preparation.py         # การดึงและทำความสะอาดชุดข้อมูล
-├── finetune_generator.py       # สคริปต์การทำ Parameter-Efficient Fine-Tuning
-├── notebooks/kaggle_evaluation.ipynb     # Notebook สำหรับประเมินผลแบบ A/B Benchmark
-├── rag_gui.py                  # ระบบหน้าต่างกราฟิก (Gradio Web UI)
-├── rag_inference.py            # โมดูลหลักสำหรับสืบค้นและสังเคราะห์คำตอบ
-├── requirements.txt            # รายการ Dependencies
-└── .gitignore                  # การคัดแยกไฟล์ขนาดใหญ่และไฟล์แคช
+├── data/                              # คลังข้อมูลและเวกเตอร์ดัชนี (Local storage)
+│   ├── passages.pkl                   # คลังข้อความกฎหมาย 4,545 มาตรา
+│   ├── chroma_db/                     # ฐานข้อมูลเวกเตอร์ ChromaDB (Multilingual-E5)
+│   └── trained_lora_model/            # LoRA Adapter Weights สำหรับรันแบบ Offline
+├── notebooks/
+│   └── kaggle_evaluation.ipynb        # สมุดบันทึกการประเมินผล A/B Benchmark บน Kaggle GPU T4
+├── scripts/
+│   ├── 01_data_preparation.py         # การดึงและจัดเตรียมชุดข้อมูลกฎหมาย
+│   ├── 02_build_index.py              # การสร้างดัชนีเวกเตอร์ ChromaDB
+│   ├── 03_finetune_generator.py       # สคริปต์ Fine-Tuning ด้วย QLoRA (Loss Masking)
+│   └── 04_eval_generation.py          # สคริปต์ประเมินผลคำตอบ (ROUGE-L & Section Match)
+├── src/
+│   └── rag_engine.py                  # โมดูลเครื่องยนต์หลัก (Hybrid Retrieval & Generation)
+├── app.py                             # เว็บแอปพลิเคชันหลัก (Gradio Web UI)
+├── requirements.txt                   # รายการ Dependencies ทั้งหมด
+└── .gitignore                         # กำหนดไฟล์และแคชที่ไม่ติดตามใน Git
 ```
 
 ---

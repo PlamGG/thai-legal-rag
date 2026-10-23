@@ -47,16 +47,34 @@ for name, param in model.named_parameters():
         param.requires_grad = False
 model.print_trainable_parameters()
 
-# Tokenize
+# Tokenize with prompt/context loss masking (labels=-100 on prompt)
 def tokenize_function(examples):
-    texts = []
+    input_ids_list = []
+    attention_mask_list = []
+    labels_list = []
     for q, positives, ans in zip(examples['question'], examples['positive_contexts'], examples['positive_answer']):
         context_str = '\n'.join([pc['context'] for pc in positives])
-        text = f"จากกฎหมายต่อไปนี้:\n{context_str}\n\nคำถาม: {q}\nคำตอบ: {ans}"
-        texts.append(text)
-    tokenized = tokenizer(texts, truncation=True, max_length=1024, padding=True, return_tensors=None)
-    tokenized["labels"] = tokenized["input_ids"].copy()
-    return tokenized
+        prompt = f"จากกฎหมายต่อไปนี้:\n{context_str}\n\nคำถาม: {q}\nคำตอบ: "
+        target = f"{ans}{tokenizer.eos_token}"
+
+        prompt_ids = tokenizer.encode(prompt, add_special_tokens=True)
+        target_ids = tokenizer.encode(target, add_special_tokens=False)
+
+        input_ids = (prompt_ids + target_ids)[:1024]
+        # Mask prompt tokens with -100 so cross-entropy loss is computed ONLY on target answer
+        prompt_len = min(len(prompt_ids), len(input_ids))
+        labels = [-100] * prompt_len + input_ids[prompt_len:]
+        attention_mask = [1] * len(input_ids)
+
+        input_ids_list.append(input_ids)
+        attention_mask_list.append(attention_mask)
+        labels_list.append(labels)
+
+    return {
+        "input_ids": input_ids_list,
+        "attention_mask": attention_mask_list,
+        "labels": labels_list
+    }
 
 tokenized_train = train_dataset.map(tokenize_function, batched=True, batch_size=1000)
 tokenized_test = test_dataset.map(tokenize_function, batched=True)
@@ -90,7 +108,7 @@ for epoch in range(2):
                 torch.cuda.empty_cache()
             total_loss += loss.item() * accumulation_steps
             if batch_idx % 10 == 0:
-                print(f"Epoch {epoch+1}, Batch {batch_idx}, Loss: {loss.item()**accumulation_steps:.4f}")
+                print(f"Epoch {epoch+1}, Batch {batch_idx}, Loss: {loss.item()*accumulation_steps:.4f}")
         except RuntimeError as e:
             if "out of memory" in str(e).lower():
                 print(f"OOM at batch {batch_idx}, skipping...")

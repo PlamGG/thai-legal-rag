@@ -6,6 +6,7 @@ Metrics: ROUGE-L, Section Match Rate, Hallucination Rate
 import re
 import random
 import time
+import json
 import torch
 from collections import Counter
 from datasets import load_dataset
@@ -109,6 +110,7 @@ def main():
     hallucinations = 0
     valid_section_checks = 0
     total_time = 0
+    eval_records = []
 
     for i, sample in enumerate(samples, 1):
         question = sample["question"]
@@ -136,7 +138,14 @@ def main():
             continue
 
         top = retrieved[0]
-        context = f"{get_meta(top['passage'], 'law_title')} มาตรา {get_meta(top['passage'], 'section')}: {get_text(top['passage'])}"
+        passage_text = get_text(top['passage']).strip()
+        law_title = get_meta(top['passage'], 'law_title', '')
+        section = str(get_meta(top['passage'], 'section', ''))
+        if law_title and law_title not in passage_text[:80]:
+            context = f"{law_title} มาตรา {section}: {passage_text}"
+        else:
+            context = passage_text
+
         prediction = generate_llm_answer(
             question, context, top["passage"], top["score"],
             llm_model, llm_tokenizer, device
@@ -145,19 +154,30 @@ def main():
         total_time += elapsed
 
         # --- Metrics ---
-        # ROUGE-L
         rl = rouge_l_f1(prediction, ground_truth)
         rouge_scores.append(rl)
 
-        # Section Match
+        hit_sec = False
         if gt_sections:
             valid_section_checks += 1
             if section_match(prediction, gt_sections):
                 section_matches += 1
+                hit_sec = True
 
-        # Hallucination
-        if has_hallucinated_section(prediction, context):
+        is_hall = has_hallucinated_section(prediction, context)
+        if is_hall:
             hallucinations += 1
+
+        eval_records.append({
+            "id": i,
+            "question": question,
+            "ground_truth": ground_truth,
+            "prediction": prediction,
+            "rouge_l": rl,
+            "section_match": hit_sec,
+            "hallucination": is_hall,
+            "latency": elapsed
+        })
 
         status = "✅" if rl > 0.3 else "⚠️"
         print(f"  [{i:02d}] {status} ROUGE-L={rl:.3f} | Q: {question[:50]}... ({elapsed:.1f}s)")
@@ -169,8 +189,8 @@ def main():
     
     avg_rouge = sum(rouge_scores) / len(rouge_scores) if rouge_scores else 0
     sec_rate = section_matches / valid_section_checks if valid_section_checks > 0 else 0
-    hall_rate = hallucinations / len(samples)
-    avg_time = total_time / len(samples)
+    hall_rate = hallucinations / len(samples) if samples else 0
+    avg_time = total_time / len(samples) if samples else 0
 
     print(f"  ROUGE-L (avg)          : {avg_rouge:.4f}")
     print(f"  Section Match Rate     : {sec_rate:.2%} ({section_matches}/{valid_section_checks})")
@@ -179,13 +199,27 @@ def main():
     print(f"  Total Samples          : {len(samples)}")
     print("=" * 60)
 
-    # 5. Output for README
+    # 5. Save detailed results to JSON artifact
+    os.makedirs("./data", exist_ok=True)
+    with open("./data/ab_eval_results.json", "w", encoding="utf-8") as f:
+        json.dump({
+            "summary": {
+                "avg_rouge_l": avg_rouge,
+                "section_match_rate": sec_rate,
+                "hallucination_rate": hall_rate,
+                "avg_time": avg_time,
+                "total_samples": len(samples)
+            },
+            "records": eval_records
+        }, f, ensure_ascii=False, indent=2)
+    print("💾 Evaluation results successfully saved to ./data/ab_eval_results.json")
+
+    # 6. Output for README
     print("\n📋 Copy-paste for README:")
     print(f"| ROUGE-L (avg) | **{avg_rouge:.2%}** |")
     print(f"| Section Match Rate | **{sec_rate:.2%}** ({section_matches}/{valid_section_checks}) |")
     print(f"| Hallucination Rate | **{hall_rate:.2%}** ({hallucinations}/{len(samples)}) |")
     print(f"| Avg Generation Time | {avg_time:.2f}s/question |")
-
 
 if __name__ == "__main__":
     main()

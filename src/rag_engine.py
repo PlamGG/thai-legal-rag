@@ -8,6 +8,8 @@ import logging
 import os
 import time
 import json
+from collections import OrderedDict
+from pythainlp.tokenize import word_tokenize
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from sentence_transformers import SentenceTransformer
 from peft import PeftModel
@@ -45,9 +47,19 @@ LEGAL_KEYWORDS = {
     'บริหาร', 'จัดการ', 'หน่วยงาน', 'ข้อกำหนด', 'สิทธิ', 'หน้าที่', 'บทลงโทษ', 'การปฏิบัติ', 'องค์กร', 'การจัดตั้ง', 'มัดจำ'
 }
 
-# Cache for retrieved passages and LLM outputs
-cache = {}
-embedding_cache = {}
+# Bounded cache to prevent memory leaks in long-running services
+class BoundedCache(OrderedDict):
+    def __init__(self, maxsize=500, *args, **kwargs):
+        self.maxsize = maxsize
+        super().__init__(*args, **kwargs)
+
+    def __setitem__(self, key, value):
+        if len(self) >= self.maxsize:
+            self.popitem(last=False)
+        super().__setitem__(key, value)
+
+cache = BoundedCache(maxsize=500)
+embedding_cache = BoundedCache(maxsize=500)
 
 # 1. Configuration & Model Loading
 def load_models_and_data(model_dir: str = "./data"):
@@ -74,7 +86,8 @@ def load_models_and_data(model_dir: str = "./data"):
 
     retriever_model = SentenceTransformer("intfloat/multilingual-e5-small", device=device)
     passage_texts = [p["text"] for p in passages]
-    tokenized_corpus = [re.findall(r'[\u0E00-\u0E7F0-9a-zA-Z]+', text.lower()) for text in passage_texts]
+    logger.info("Building BM25 index with PyThaiNLP word tokenization...")
+    tokenized_corpus = [word_tokenize(text.lower(), engine="newmm") for text in passage_texts]
     bm25_model = BM25Okapi(tokenized_corpus)
 
     llm_model, llm_tokenizer = None, None
@@ -120,137 +133,99 @@ def get_meta(passage: dict, key: str, default: any = '') -> any:
     meta = passage.get('metadata', {}) if isinstance(passage, dict) else {}
     return meta.get(key, default) if isinstance(meta, dict) else default
 
+# BM25 Stopwords to prevent lexical traps on procedural/question phrasing
+BM25_STOPWORDS = {
+    'เงื่อนไข', 'อย่างไร', 'ขั้นตอน', 'มีอะไรบ้าง', 'ข้อกำหนด', 'คืออะไร', 'กรณีใด',
+    'อะไร', 'ทำไม', 'อย่างไรบ้าง', 'มีผลอย่างไร', 'ต้องทำอย่างไร', 'หรือไม', 'หรือไม่',
+    'การ', 'ความ', 'มี', 'ได้', 'ต้อง', 'ให้', 'ตาม', 'ใน', 'ของ', 'และ', 'หรือ', 'ถ้า',
+    'ผู้', 'ที่', 'ซึ่ง', 'อัน', 'ไว้', 'แก่', 'ต่อ', 'ด้วย', 'แห่ง', 'นั้น', 'นี้',
+    'เป็นอย่างไร', 'หมายความว่าอย่างไร'
+}
+
 def tokenize_text(text: str) -> list[str]:
-    return re.findall(r'[\u0E00-\u0E7F0-9a-zA-Z]+', str(text).lower())
+    return word_tokenize(str(text).lower(), engine="newmm")
 
-def calc_similarity(queries: list, texts: list, retriever_model, device) -> np.ndarray:
-    cache_key = tuple(queries + texts)
-    if cache_key in embedding_cache:
-        return embedding_cache[cache_key]
-    if not queries or not texts:
-        return np.zeros((len(queries), len(texts)))
-    with torch.amp.autocast(device_type="cuda" if device.startswith("cuda") else "cpu", dtype=torch.bfloat16):
-        embeddings = retriever_model.encode(queries + texts, convert_to_numpy=True, device=device, batch_size=16)
-        query_embs = embeddings[:len(queries)]
-        text_embs = embeddings[len(queries):]
-        scores = np.dot(query_embs, text_embs.T) / (np.linalg.norm(query_embs, axis=1)[:, None] * np.linalg.norm(text_embs, axis=1)[None, :] + 1e-6)
-        for i, text in enumerate(texts):
-            if any(kw in tokenize_text(text) for kw in LEGAL_KEYWORDS):
-                scores[:, i] += 0.3
-    embedding_cache[cache_key] = scores.clip(0, 1)
-    return embedding_cache[cache_key]
+def tokenize_query_bm25(text: str) -> list[str]:
+    tokens = word_tokenize(str(text).lower(), engine="newmm")
+    filtered = [t for t in tokens if t.strip() and t not in BM25_STOPWORDS]
 
-def complete_last_sentence(text: str) -> str:
-    if not text:
-        return "."
-    sentences = re.split(r'[.!?。]', text)
-    sentences = [s.strip() for s in sentences if s.strip()]
-    if not sentences:
-        return text + "."
-    last_sentence = sentences[-1]
-    if not last_sentence.endswith(('.','!','?','。')):
-        return text + " ตามที่กฎหมายกำหนด."
-    return text
+    # Compound sub-segmentation for legal terms to prevent dictionary mismatch
+    expanded = list(filtered)
+    legal_components = [
+        'ครอบครอง', 'ปรปักษ์', 'นิติกรรม', 'สัญญา', 'มัดจำ', 'หุ้นส่วน', 'บริษัท',
+        'กรรมการ', 'ประชุม', 'จดทะเบียน', 'ละเมิด', 'ทรัพย์สิน', 'หนี้', 'กรรมสิทธิ์',
+        'ผู้ถือหุ้น', 'เงินปันผล', 'ภาษี', 'หลักประกัน'
+    ]
+    for t in filtered:
+        for comp in legal_components:
+            if comp in t and comp != t and comp not in expanded:
+                expanded.append(comp)
+
+    clean = [x for x in expanded if x.strip() and x not in BM25_STOPWORDS]
+    return clean if clean else [t for t in tokens if t.strip()]
 
 # 3. RAG Core Functions
 def retrieve_documents(query: str, collection, retriever_model, bm25_model, passages, device, k: int = 1):
     try:
         logger.info(f"Retrieving for query: {query}")
-        tokenized_query = tokenize_text(query)
-        bm25_scores = bm25_model.get_scores(tokenized_query)
-        top_bm25_indices = np.argsort(bm25_scores)[-100:]
-        filtered_passages = [passages[i] for i in top_bm25_indices]
+        tokenized_query = tokenize_query_bm25(query)
+        bm25_scores = np.array(bm25_model.get_scores(tokenized_query), dtype=np.float32)
+        max_bm25 = float(bm25_scores.max()) if len(bm25_scores) > 0 and bm25_scores.max() > 0 else 0.0
+
+        n_candidates = min(100, len(passages))
+        top_bm25_indices = set(np.argsort(bm25_scores)[-n_candidates:])
+
+        # Query embedding with E5 query: prefix
+        query_text = f"query: {query}" if not query.startswith("query: ") else query
         with torch.amp.autocast(device_type="cuda" if device.startswith("cuda") else "cpu", dtype=torch.bfloat16):
-            query_emb = retriever_model.encode([query], convert_to_numpy=True, device=device).astype('float32')
+            query_emb = retriever_model.encode([query_text], convert_to_numpy=True, device=device).astype('float32')
+
         chroma_results = collection.query(
             query_embeddings=query_emb.tolist(),
-            n_results=k,
+            n_results=n_candidates,
             include=["documents", "metadatas", "distances"]
         )
+
+        dense_dict = {}
+        if chroma_results and chroma_results.get("documents") and chroma_results["documents"][0]:
+            for doc, dist in zip(chroma_results["documents"][0], chroma_results["distances"][0]):
+                dense_sim = max(0.0, 1.0 - (dist / 2.0))
+                dense_dict[doc] = dense_sim
+
+        # Fast lookup mapping document text to index
+        doc_to_idx = {p.get("text", ""): idx for idx, p in enumerate(passages)}
+        candidate_indices = set(top_bm25_indices)
+        for doc in dense_dict:
+            if doc in doc_to_idx:
+                candidate_indices.add(doc_to_idx[doc])
+
         results = []
-        for doc, meta, dist in zip(chroma_results["documents"][0], chroma_results["metadatas"][0], chroma_results["distances"][0]):
-            try:
-                passage_idx = next(j for j, p in enumerate(passages) if p.get("text") == doc)
-                dense_score = 1 - (dist / (max(chroma_results["distances"][0]) + 1e-6))
-                sparse_score = bm25_scores[passage_idx] / (max(bm25_scores) + 1e-6 if max(bm25_scores) > 0 else 1e-6)
-                combined_score = 0.8 * dense_score + 0.2 * sparse_score
-                passage = passages[passage_idx]
-                if any(kw in get_text(passage) for kw in LEGAL_KEYWORDS):
-                    combined_score += 0.3
-                results.append({"passage": passage, "score": combined_score})
-            except StopIteration:
-                continue
+        for idx in candidate_indices:
+            passage = passages[idx]
+            doc_text = passage.get("text", "")
+
+            # Normalized BM25 score
+            sparse_score = (bm25_scores[idx] / max_bm25) if max_bm25 > 0 else 0.0
+            dense_score = dense_dict.get(doc_text, 0.0)
+
+            # Combined score: 50% Dense + 50% Sparse
+            combined_score = 0.5 * dense_score + 0.5 * sparse_score
+
+            # Subtle keyword boost for legal terms
+            if any(kw in doc_text for kw in LEGAL_KEYWORDS):
+                combined_score += 0.05
+
+            results.append({"passage": passage, "score": float(combined_score)})
+
         sorted_results = sorted(results, key=lambda x: x["score"], reverse=True)[:k]
-        logger.info(f"Found {len(sorted_results)} results, top score: {sorted_results[0]['score'] if sorted_results else 0}")
+        logger.info(f"Found {len(sorted_results)} results, top score: {sorted_results[0]['score'] if sorted_results else 0:.4f}")
         return sorted_results
     except Exception as e:
         logger.error(f"Retrieval error: {e}")
         return []
 
-def check_passage_relevance(question: str, passage_text: str, model, tokenizer, device) -> tuple[bool, bool]:
-    try:
-        prompt = (
-            f"คำถาม: {question}\n"
-            f"ข้อมูล: {passage_text}\n"
-            f"ตอบเฉพาะ {{'is_relevant': bool, 'has_steps': bool}} โดย:\n"
-            f"- 'is_relevant': true ถ้าข้อมูลเกี่ยวข้องกับคำถาม, false ถ้าไม่เกี่ยวข้อง\n"
-            f"- 'has_steps': true ถ้าคำถามเกี่ยวกับวิธีการและข้อมูลมีขั้นตอนชัดเจน, false ถ้าไม่มี\n"
-            f"ตัวอย่าง:\n"
-            f"1. คำถาม: 'มัดจำคืออะไร' ข้อมูล: 'มัดจำนั้น ถ้ามิได้ตกลง...' → {{'is_relevant': true, 'has_steps': false}}\n"
-            f"2. คำถาม: 'วิธีจัดตั้งบริษัท' ข้อมูล: 'การจัดตั้งต้องยื่น...' → {{'is_relevant': true, 'has_steps': true}}\n"
-            f"3. คำถาม: 'มัดจำคืออะไร' ข้อมูล: 'สัญญาคือ...' → {{'is_relevant': false, 'has_steps': false}}\n"
-            f"ตอบเฉพาะ JSON ในรูปแบบ {{}} เท่านั้น"
-        )
-        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=256).to(device)
-        with torch.amp.autocast(device_type="cuda" if device.startswith("cuda") else "cpu", dtype=torch.bfloat16):
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=200,
-                pad_token_id=tokenizer.eos_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-                repetition_penalty=1.1
-            )
-        response = tokenizer.decode(outputs[0], skip_special_tokens=True).replace(prompt, "").strip()
-
-        # ใช้ regex เพื่อดึงเฉพาะส่วนที่เป็น JSON
-        json_match = re.search(r'\{.*?\}', response, re.DOTALL)
-        if json_match:
-            try:
-                result = json.loads(json_match.group(0))
-                is_relevant = result.get('is_relevant', False)
-                has_steps = result.get('has_steps', False)
-                return is_relevant, has_steps
-            except json.JSONDecodeError:
-                logger.error(f"JSON decode error: {json_match.group(0)}")
-                pass
-
-    except Exception as e:
-        logger.error(f"Relevance check error: {e}")
-    
-    # Fallback: ใช้ heuristic-based relevance checking
-    question_lower = question.lower()
-    passage_lower = passage_text.lower()
-    
-    # ตรวจสอบ keyword matching
-    question_keywords = tokenize_text(question)
-    passage_keywords = tokenize_text(passage_text)
-    
-    # นับคำที่ตรงกัน
-    matching_keywords = set(question_keywords) & set(passage_keywords)
-    
-    is_relevant = len(matching_keywords) >= 2 or any(
-        kw in passage_lower for kw in question_lower.split() if len(kw) > 2
-    )
-    
-    has_steps = 'วิธี' in question_lower and any(
-        step_word in passage_lower for step_word in ['ขั้นตอน', 'กระบวนการ', 'ต้อง', 'ดำเนินการ', 'จัดทำ']
-    )
-    
-    logger.warning(f"Fallback to keyword-based relevance: is_relevant={is_relevant}, has_steps={has_steps}")
-    return is_relevant, has_steps
-
 def generate_llm_answer(question: str, context: str, passage: dict, score: float, model, tokenizer, device) -> str:
-    if not model or not tokenizer:
+    if not model or not tokenizer or not context or not context.strip():
         return "ไม่พบข้อมูลที่เกี่ยวข้อง"
     try:
         prompt = f"จากกฎหมายต่อไปนี้:\n{context}\n\nคำถาม: {question}\nคำตอบ:"
@@ -260,6 +235,8 @@ def generate_llm_answer(question: str, context: str, passage: dict, score: float
                 **inputs,
                 max_new_tokens=256,
                 do_sample=False,
+                temperature=None,
+                top_p=None,
                 pad_token_id=tokenizer.eos_token_id,
                 eos_token_id=tokenizer.eos_token_id,
                 repetition_penalty=1.1
@@ -301,32 +278,45 @@ def get_answer(question: str, passages, collection, retriever_model, bm25_model,
     if not retrieved:
         return f"💡 คำอธิบาย: ไม่พบข้อมูลที่เกี่ยวข้อง\n⏱️ Time taken: {time.time() - start_time:.2f} seconds", []
     
-    # Generate LLM answer
+    # Check confidence threshold to prevent hallucination
     top_passage = retrieved[0]['passage']
     score = retrieved[0]['score']
-    context = f"{get_meta(top_passage, 'law_title')} มาตรา {get_meta(top_passage, 'section')}: {get_text(top_passage)}"
+    MIN_CONFIDENCE_THRESHOLD = 0.28
+
+    if score < MIN_CONFIDENCE_THRESHOLD:
+        output = (
+            f"💡 คำอธิบาย: ขออภัย ไม่พบบทบัญญัติกฎหมายที่เกี่ยวข้องโดยตรงกับคำถามนี้ในคลังข้อมูล "
+            f"(คะแนนความเกี่ยวข้องต่ำกว่าเกณฑ์: {score:.2f})\n\n"
+            f"💡 คำแนะนำ: กรุณาระบุคำถามให้เฉพาะเจาะจง หรือระบุเลขมาตรา/ชื่อ พ.ร.บ. ธุรกิจที่ต้องการค้นหา\n"
+            f"⏱️ Time taken: {time.time() - start_time:.2f} seconds"
+        )
+        cache[question] = (retrieved, output)
+        return output, retrieved
+
+    # Generate LLM answer
+    passage_text = get_text(top_passage).strip()
+    law_title = get_meta(top_passage, 'law_title', '')
+    section = str(get_meta(top_passage, 'section', ''))
+    if law_title and law_title not in passage_text[:80]:
+        context = f"{law_title} มาตรา {section}: {passage_text}"
+    else:
+        context = passage_text
     response = generate_llm_answer(question, context, top_passage, score, llm_model, llm_tokenizer, device)
     
-    # ✅ แก้ไขส่วนนี้: แสดงข้อมูลแม้จะไม่ตรงเป๊ะ แต่มีข้อมูลใกล้เคียง
-    if response == "ไม่พบข้อมูลที่เกี่ยวข้อง" and retrieved:
-        # แสดงข้อมูลที่ใกล้เคียงที่สุดที่เจอ
-        best_match = retrieved[0]
-        best_text = get_text(best_match['passage'])
-        best_law = get_meta(best_match['passage'], 'law_title', 'ไม่ทราบชื่อกฎหมาย')
-        best_section = get_meta(best_match['passage'], 'section', 'ไม่ทราบมาตรา')
-        
-        output = f"💡 คำอธิบาย: ขออภัย ไม่พบคำตอบที่ตรงกับคำถามของคุณโดยเฉพาะ\n\n"
-        output += f"📋 ข้อมูลกฎหมายที่เกี่ยวข้องที่พบ:\n"
-        output += f"   📖 {best_law} มาตรา {best_section}\n"
-        output += f"   📝 {best_text[:200]}..." if len(best_text) > 200 else f"   📝 {best_text}\n\n"
-        output += f"   ⭐ คะแนนความเกี่ยวข้อง: {best_match['score']:.2f}\n\n"
-        output += f"💡 คำแนะนำ: กรุณาระบุคำถามให้ชัดเจนยิ่งขึ้น หรือสอบถามข้อมูลเฉพาะเรื่อง"
+    if response == "ไม่พบข้อมูลที่เกี่ยวข้อง":
+        output = (
+            f"💡 คำอธิบาย: ขออภัย ระบบไม่สามารถสกัดสรุปคำตอบจากตัวบทกฎหมายที่พบได้อย่างสมบูรณ์\n\n"
+            f"💡 คำแนะนำ: กรุณาระบุประเด็นคำถามให้ชัดเจนยิ่งขึ้น\n"
+        )
     else:
-        output = f"💡 คำอธิบาย: {response}\n"
-        if response != "ไม่พบข้อมูลที่เกี่ยวข้อง":
-            output += f"📚 แหล่งที่มา:\n   1. {get_meta(top_passage, 'law_title')} มาตรา {get_meta(top_passage, 'section')} (Score: {score:.2f})\n"
+        output = f"💡 คำอธิบาย: {response}\n\n"
+
+    output += "📚 แหล่งที่มาที่เกี่ยวข้อง:\n"
+    for rank, item in enumerate(retrieved[:3], 1):
+        p = item['passage']
+        output += f"   {rank}. {get_meta(p, 'law_title')} มาตรา {get_meta(p, 'section')} (ความเกี่ยวข้อง: {item['score']:.2f})\n"
     
-    output += f"⏱️ Time taken: {time.time() - start_time:.2f} seconds"
+    output += f"\n⏱️ Time taken: {time.time() - start_time:.2f} seconds"
     cache[question] = (retrieved, output)
     return output, retrieved
 

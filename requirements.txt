@@ -9,4 +9,6 @@ chromadb
 rank-bm25
 gradio
 pythainlp
+scikit-learn
 tqdm
+reportlab

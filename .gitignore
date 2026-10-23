@@ -18,6 +18,10 @@ eval_results.json
 ab_eval_results.json
 huggingface_model_card.txt
 
+# Internal Documentation & Generation Script (Private - Do NOT push)
+*.pdf
+scripts/generate_docs_pdf.py
+
 # OS & IDE
 .DS_Store
 Thumbs.db
