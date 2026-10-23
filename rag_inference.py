@@ -253,37 +253,29 @@ def generate_llm_answer(question: str, context: str, passage: dict, score: float
     if not model or not tokenizer:
         return "ไม่พบข้อมูลที่เกี่ยวข้อง"
     try:
-        is_relevant, has_steps = check_passage_relevance(question, get_text(passage), model, tokenizer, device)
-        if score > 0.5 and is_relevant:  # ลด threshold จาก 0.7 เป็น 0.5
-            if 'วิธี' in question and not has_steps:
-                prompt = (
-                    f"จากข้อมูลกฎหมาย: {context}\n\n"
-                    f"คำถาม: {question}\n"
-                    f"ข้อมูลไม่มีขั้นตอนชัดเจน ให้อธิบายขั้นตอนทั่วไปที่เกี่ยวข้องกับคำถามโดยละเอียด ใช้ภาษาง่ายและชัดเจน จบประโยคให้สมบูรณ์ ห้ามสรุปสั้น"
-                )
-                inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=256).to(device)
-                with torch.amp.autocast(device_type="cuda" if device.startswith("cuda") else "cpu", dtype=torch.bfloat16):
-                    outputs = model.generate(
-                        **inputs,
-                        max_new_tokens=200,
-                        pad_token_id=tokenizer.eos_token_id,
-                        eos_token_id=tokenizer.eos_token_id,
-                        repetition_penalty=1.1
-                    )
-                response = tokenizer.decode(outputs[0], skip_special_tokens=True).replace(prompt, "").strip()
-                response = re.sub(r'คำอธิบายสรุปสั้นๆ.*$', '', response, flags=re.DOTALL)
-                return complete_last_sentence(response)
-            else:
-                return complete_last_sentence(get_text(passage))
-        return "ไม่พบข้อมูลที่เกี่ยวข้อง"
+        prompt = f"จากกฎหมายต่อไปนี้:\n{context}\n\nคำถาม: {question}\nคำตอบ:"
+        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024).to(device)
+        with torch.amp.autocast(device_type="cuda" if device.startswith("cuda") else "cpu", dtype=torch.bfloat16):
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=256,
+                do_sample=False,
+                pad_token_id=tokenizer.eos_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+                repetition_penalty=1.1
+            )
+        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        if "คำตอบ:" in response:
+            answer = response.split("คำตอบ:")[-1].strip()
+        else:
+            answer = response[len(prompt):].strip()
+        return answer if answer else get_text(passage)
     except Exception as e:
         logger.error(f"LLM error: {e}")
-        # หากเกิด error แต่มีคะแนนสูง enough ให้แสดงข้อมูล anyway
-        if score > 0.4:  # threshold ต่ำกว่า
-            return f"ข้อมูลที่เกี่ยวข้อง: {get_text(passage)[:300]}..."
-        return "ไม่พบข้อมูลที่เกี่ยวข้อง"
+        return f"ข้อมูลที่เกี่ยวข้อง: {get_text(passage)[:300]}..."
     finally:
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 def get_answer(question: str, passages, collection, retriever_model, bm25_model, llm_model, llm_tokenizer, device):
     start_time = time.time()

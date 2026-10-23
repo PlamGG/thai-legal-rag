@@ -1,0 +1,28 @@
+# Dependencies & Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.hf_cache/
+
+# Large Datasets & Model Weights (Do NOT push to Git)
+data/
+*.safetensors
+*.bin
+*.sqlite3
+*.index
+*.pkl
+
+# UI & Logs
+.gradio/
+*.log
+eval_results.json
+ab_eval_results.json
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

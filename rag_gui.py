@@ -177,37 +177,29 @@ def generate_llm_answer(question: str, passage: dict, score: float, model, token
     if not model or not tokenizer:
         return "ไม่พบข้อมูลที่เกี่ยวข้อง"
     
-    is_relevant, has_steps = check_passage_relevance(question, get_text(passage), model, tokenizer, device)
-    
-    if score > 0.5 and is_relevant:
+    try:
         context = f"{get_meta(passage, 'law_title')} มาตรา {get_meta(passage, 'section')}: {get_text(passage)}"
-        if 'วิธี' in question and not has_steps:
-            prompt = (
-                f"จากข้อมูลกฎหมาย: {context}\n\n"
-                f"คำถาม: {question}\n"
-                f"ข้อมูลไม่มีขั้นตอนชัดเจน ให้อธิบายขั้นตอนทั่วไปที่เกี่ยวข้องกับคำถามโดยละเอียด ใช้ภาษาง่ายและชัดเจน"
-            )
-        else:
-            prompt = f"จากข้อมูลกฎหมาย: {context}\n\nคำถาม: {question}\nตอบโดยสรุปและชัดเจน"
+        prompt = f"จากกฎหมายต่อไปนี้:\n{context}\n\nคำถาม: {question}\nคำตอบ:"
         
-        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512).to(device)
-        with torch.amp.autocast('cuda') if device == "cuda" else torch.no_grad():
+        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024).to(device)
+        with torch.no_grad():
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=200,
+                max_new_tokens=256,
+                do_sample=False,
                 pad_token_id=tokenizer.eos_token_id,
+                eos_token_id=tokenizer.eos_token_id,
                 repetition_penalty=1.1
             )
-        response = tokenizer.decode(outputs[0], skip_special_tokens=True).replace(prompt, "").strip()
-        start_index = response.rfind("ตอบโดยสรุปและชัดเจน")
-        if start_index != -1:
-            response = response[start_index:].strip()
+        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        if "คำตอบ:" in response:
+            answer = response.split("คำตอบ:")[-1].strip()
+        else:
+            answer = response[len(prompt):].strip()
 
-        if not response:
-            return "ไม่พบข้อมูลที่เกี่ยวข้อง"
-        
-        return response
-    return "ไม่พบข้อมูลที่เกี่ยวข้อง"
+        return answer if answer else get_text(passage)
+    except Exception as e:
+        return f"ข้อมูลที่เกี่ยวข้อง: {get_text(passage)[:300]}..."
 
 # Main answer function
 def get_answer(question: str, history):
