@@ -154,32 +154,14 @@ print(tokenizer.decode(outputs[0], skip_special_tokens=True).split("คำตอ
 
 ---
 
-### วิธีที่ 2: รันระบบแชทบอทเต็มรูปแบบ (Full Hybrid RAG Web UI)
+### 2. รันระบบแชทบอทได้ทันที (Ready-to-Use Web UI)
 
-#### 1. Clone Repository & ติดตั้ง Dependencies
-```bash
-git clone https://github.com/PlamGG/thai-legal-rag.git
-cd thai-legal-rag
-pip install -r requirements.txt
-```
+เนื่องจากโปรเจกต์นี้ได้จัดเตรียมคลังมาตรากฎหมาย (Corpus 4,545 มาตรา) และเวกเตอร์ดัชนี ChromaDB ไว้ในโฟลเดอร์ `data/` เรียบร้อยแล้ว ผู้ใช้จึงสามารถรันระบบแชทบอทได้ทันทีโดยไม่ต้องเสียเวลาดาวน์โหลดและสร้าง Index ใหม่:
 
-#### 2. เตรียมคลังดัชนีข้อความกฎหมาย (Corpus & Index)
-*(เนื่องจากไฟล์ Index ขนาดใหญ่ไม่ได้ถูกจัดเก็บใน Git สามารถสร้างใหม่ได้ง่ายๆ ด้วย 2 คำสั่ง)*
-```bash
-python data_preparation.py   # สกัดตัวบทกฎหมาย 4,545 มาตรา (~2 นาที)
-python build_index.py        # สร้าง Vector Database ChromaDB (~5-10 นาที)
-```
-
-#### 3. เปิดใช้งาน Web Interface (Gradio)
 ```bash
 python rag_gui.py
 ```
-เปิดเบราว์เซอร์ไปที่ `http://127.0.0.1:7860` โดยระบบจะทำการดึง LoRA Adapter จาก Hugging Face (`DuckerMaster/thai-legal-lora`) มาให้อัตโนมัติ
-
-#### 4. รันผ่าน Command Line Interface (CLI)
-```bash
-python rag_inference.py
-```
+เปิดเบราว์เซอร์ไปที่ `http://127.0.0.1:7860` ระบบจะดึง LoRA Adapter จาก Hugging Face (`DuckerMaster/thai-legal-lora`) มาให้อัตโนมัติ พร้อมใช้งานทันที
 
 ---
 
