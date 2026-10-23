@@ -4,7 +4,7 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Base Model](https://img.shields.io/badge/Base%20Model-SCB%2010X%20Typhoon--2--3B-orange.svg)](https://huggingface.co/scb10x/llama3.2-typhoon2-3b)
 [![LoRA Checkpoint](https://img.shields.io/badge/HuggingFace-thai--legal--lora-yellow.svg)](https://huggingface.co/DuckerMaster/thai-legal-lora)
-[![Evaluation Platform](https://img.shields.io/badge/Benchmark-Kaggle%20GPU%20T4-informational.svg)](kaggle_evaluation.ipynb)
+[![Evaluation Platform](https://img.shields.io/badge/Benchmark-Kaggle%20GPU%20T4-informational.svg)](notebooks/kaggle_evaluation.ipynb)
 
 ระบบสืบค้นและตอบคำถามกฎหมายไทยเชิงลึก (Domain-Specific Legal Q&A System) พัฒนาขึ้นโดยการผสานสถาปัตยกรรม **Hybrid Retrieval (Multilingual-E5 + BM25Okapi)** เข้ากับแบบจำลองภาษาขนาดเล็ก (Small Language Model) **SCB 10X Typhoon-2 (3B)** ที่ผ่านการปรับจูนพารามิเตอร์เฉพาะทางด้วยเทคนิค **LoRA (Low-Rank Adaptation)** เพื่อแก้ไขปัญหาการสร้างข้อมูลคลาดเคลื่อน (Hallucination) และเพิ่มความแม่นยำในการอ้างอิงเลขมาตราตามประมวลกฎหมายแพ่งและพาณิชย์
 
@@ -33,7 +33,7 @@
 | **Average Latency (GPU T4)** | ~1.8 วินาที/ข้อความ | ~1.9 วินาที/ข้อความ | +0.1 วินาที |
 | **Peak VRAM (Inference)** | ~3.5 GB | ~3.5 GB | ไม่มีความแตกต่าง (4-bit NF4) |
 
-> 📓 บันทึกผลการทดสอบอย่างละเอียดพร้อมโค้ดประเมินผลสามารถตรวจสอบได้ที่ [kaggle_evaluation.ipynb](kaggle_evaluation.ipynb)
+> 📓 บันทึกผลการทดสอบอย่างละเอียดพร้อมโค้ดประเมินผลสามารถตรวจสอบได้ที่ [notebooks/kaggle_evaluation.ipynb](notebooks/kaggle_evaluation.ipynb)
 
 ---
 
@@ -159,7 +159,7 @@ print(tokenizer.decode(outputs[0], skip_special_tokens=True).split("คำตอ
 เนื่องจากโปรเจกต์นี้ได้จัดเตรียมคลังมาตรากฎหมาย (Corpus 4,545 มาตรา) และเวกเตอร์ดัชนี ChromaDB ไว้ในโฟลเดอร์ `data/` เรียบร้อยแล้ว ผู้ใช้จึงสามารถรันระบบแชทบอทได้ทันทีโดยไม่ต้องเสียเวลาดาวน์โหลดและสร้าง Index ใหม่:
 
 ```bash
-python rag_gui.py
+python app.py
 ```
 เปิดเบราว์เซอร์ไปที่ `http://127.0.0.1:7860` ระบบจะดึง LoRA Adapter จาก Hugging Face (`DuckerMaster/thai-legal-lora`) มาให้อัตโนมัติ พร้อมใช้งานทันที
 
@@ -171,14 +171,14 @@ python rag_gui.py
 
 1. **เตรียมชุดข้อมูลมาตรากฎหมาย (Corpus Extraction):**
    ```bash
-   python data_preparation.py
+   python scripts/01_data_preparation.py
    ```
 2. **สร้างเวกเตอร์ดัชนี (Build ChromaDB Index):**
    ```bash
-   python build_index.py
+   python scripts/02_build_index.py
    ```
 3. **รันการทดสอบ A/B Benchmark บน Kaggle:**
-   - นำไฟล์ [kaggle_evaluation.ipynb](kaggle_evaluation.ipynb) ไปเปิดบน [Kaggle Notebooks](https://www.kaggle.com/)
+   - นำไฟล์ [notebooks/kaggle_evaluation.ipynb](notebooks/kaggle_evaluation.ipynb) ไปเปิดบน [Kaggle Notebooks](https://www.kaggle.com/)
    - เลือก Accelerator เป็น **GPU T4 x1** และเปิด **Internet ON**
    - รันเซลล์ทั้งหมดเพื่อดูผลเปรียบเทียบระหว่าง Base Model และ LoRA
 
@@ -195,7 +195,7 @@ thai-legal-rag/
 ├── build_index.py              # สคริปต์คำนวณ Embedding และสร้างดัชนี
 ├── data_preparation.py         # การดึงและทำความสะอาดชุดข้อมูล
 ├── finetune_generator.py       # สคริปต์การทำ Parameter-Efficient Fine-Tuning
-├── kaggle_evaluation.ipynb     # Notebook สำหรับประเมินผลแบบ A/B Benchmark
+├── notebooks/kaggle_evaluation.ipynb     # Notebook สำหรับประเมินผลแบบ A/B Benchmark
 ├── rag_gui.py                  # ระบบหน้าต่างกราฟิก (Gradio Web UI)
 ├── rag_inference.py            # โมดูลหลักสำหรับสืบค้นและสังเคราะห์คำตอบ
 ├── requirements.txt            # รายการ Dependencies

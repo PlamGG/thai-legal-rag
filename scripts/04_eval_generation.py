@@ -10,8 +10,12 @@ import torch
 from collections import Counter
 from datasets import load_dataset
 
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 # Import from existing codebase
-from rag_inference import (
+from src.rag_engine import (
     load_models_and_data,
     retrieve_documents,
     generate_llm_answer,

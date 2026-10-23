@@ -1,3 +1,6 @@
+import os, sys
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+os.chdir(BASE_DIR)
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, DataCollatorForLanguageModeling, BitsAndBytesConfig
 from datasets import load_dataset
