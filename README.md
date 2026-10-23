@@ -106,20 +106,77 @@ flowchart TD
 - Python 3.10 ขึ้นไป
 - การ์ดจอ NVIDIA GPU ที่รองรับ CUDA (VRAM แนะนำ ≥ 4 GB) หรือรันผ่าน CPU (ความเร็วลดลง)
 
-### 1. ติดตั้ง Dependencies
+---
+
+### วิธีที่ 1: ดึง LoRA จาก Hugging Face ไปทดลองในโค้ดของคุณเอง (Direct Load)
+
+สามารถดึงเฉพาะ LoRA Adapter น้ำหนักเบา (~14.7 MB) จาก Hugging Face ไปใช้งานร่วมกับ `scb10x/llama3.2-typhoon2-3b` ได้ทันทีโดยไม่ต้องโหลดไฟล์ทั้งหมดของโปรเจกต์:
+
+```python
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+from peft import PeftModel
+
+base_model_id = "scb10x/llama3.2-typhoon2-3b"
+lora_adapter_id = "DuckerMaster/thai-legal-lora"
+
+# 1. โหลด Base Model แบบ 4-bit NF4
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_compute_dtype=torch.float16,
+    bnb_4bit_use_double_quant=True
+)
+
+tokenizer = AutoTokenizer.from_pretrained(base_model_id)
+base_model = AutoModelForCausalLM.from_pretrained(
+    base_model_id,
+    quantization_config=bnb_config,
+    device_map="auto"
+)
+
+# 2. ดาวน์โหลดและเชื่อมต่อ LoRA Adapter จาก Hugging Face อัตโนมัติ
+model = PeftModel.from_pretrained(base_model, lora_adapter_id)
+model.eval()
+
+# 3. ทดสอบการตอบคำถามตาม Prompt Format ที่ผ่านการเทรน
+context = "ประมวลกฎหมายแพ่งและพาณิชย์ มาตรา 1012: อันว่าสัญญาจัดตั้งห้างหุ้นส่วนหรือบริษัทนั้น คือสัญญาซึ่งบุคคลตั้งแต่สองคนขึ้นไปตกลงเข้ากันเพื่อกระทำกิจการร่วมกัน ด้วยประสงค์จะแบ่งปันกำไรอันจะพึงได้แต่กิจการที่ทำนั้น"
+question = "สัญญาจัดตั้งห้างหุ้นส่วนหรือบริษัทคืออะไร"
+
+prompt = f"จากกฎหมายต่อไปนี้:\n{context}\n\nคำถาม: {question}\nคำตอบ:"
+inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+
+with torch.no_grad():
+    outputs = model.generate(**inputs, max_new_tokens=200, do_sample=False, repetition_penalty=1.1)
+
+print(tokenizer.decode(outputs[0], skip_special_tokens=True).split("คำตอบ:")[-1].strip())
+```
+
+---
+
+### วิธีที่ 2: รันระบบแชทบอทเต็มรูปแบบ (Full Hybrid RAG Web UI)
+
+#### 1. Clone Repository & ติดตั้ง Dependencies
 ```bash
 git clone https://github.com/PlamGG/thai-legal-rag.git
 cd thai-legal-rag
 pip install -r requirements.txt
 ```
 
-### 2. รันระบบผ่าน Web Interface (Gradio UI)
+#### 2. เตรียมคลังดัชนีข้อความกฎหมาย (Corpus & Index)
+*(เนื่องจากไฟล์ Index ขนาดใหญ่ไม่ได้ถูกจัดเก็บใน Git สามารถสร้างใหม่ได้ง่ายๆ ด้วย 2 คำสั่ง)*
+```bash
+python data_preparation.py   # สกัดตัวบทกฎหมาย 4,545 มาตรา (~2 นาที)
+python build_index.py        # สร้าง Vector Database ChromaDB (~5-10 นาที)
+```
+
+#### 3. เปิดใช้งาน Web Interface (Gradio)
 ```bash
 python rag_gui.py
 ```
-เปิดเบราว์เซอร์ไปที่ `http://127.0.0.1:7860` เพื่อเริ่มทดสอบถาม-ตอบคำถามกฎหมาย
+เปิดเบราว์เซอร์ไปที่ `http://127.0.0.1:7860` โดยระบบจะทำการดึง LoRA Adapter จาก Hugging Face (`DuckerMaster/thai-legal-lora`) มาให้อัตโนมัติ
 
-### 3. รันผ่าน Command Line Interface (CLI)
+#### 4. รันผ่าน Command Line Interface (CLI)
 ```bash
 python rag_inference.py
 ```
