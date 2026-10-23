@@ -17,7 +17,8 @@
 4. [โครงสร้างระบบและการทำงาน (System Architecture)](#-โครงสร้างระบบและการทำงาน-system-architecture)
 5. [การติดตั้งและเริ่มใช้งาน (Quick Start)](#-การติดตั้งและเริ่มใช้งาน-quick-start)
 6. [การทำซ้ำผลการทดลอง (Reproducibility & Evaluation)](#-การทำซ้ำผลการทดลอง-reproducibility--evaluation)
-7. [ข้อจำกัดและความปลอดภัย (Limitations & Disclaimer)](#-ข้อจำกัดและความปลอดภัย-limitations--disclaimer)
+7. [โครงสร้างโปรเจกต์ (Project Structure)](#-โครงสร้างโปรเจกต์-project-structure)
+8. [ข้อจำกัดและความปลอดภัย (Limitations & Disclaimer)](#-ข้อจำกัดและความปลอดภัย-limitations--disclaimer)
 
 ---
 
@@ -103,14 +104,40 @@ flowchart TD
 ## 🚀 การติดตั้งและเริ่มใช้งาน (Quick Start)
 
 ### ข้อกำหนดของระบบ (System Requirements)
-- Python 3.10 ขึ้นไป
-- การ์ดจอ NVIDIA GPU ที่รองรับ CUDA (VRAM แนะนำ ≥ 4 GB) หรือรันผ่าน CPU (ความเร็วลดลง)
+- **Python:** 3.10 ขึ้นไป
+- **ฮาร์ดแวร์:** การ์ดจอ NVIDIA GPU ที่รองรับ CUDA (VRAM แนะนำ ≥ 4 GB เช่น GTX 1650, RTX 3060) หรือรันผ่าน CPU
+- **ระบบปฏิบัติการ:** Linux หรือ Windows (แนะนำให้ติดตั้ง PyTorch ที่รองรับ CUDA ให้พร้อม)
 
 ---
 
-### วิธีที่ 1: ดึง LoRA จาก Hugging Face ไปทดลองในโค้ดของคุณเอง (Direct Load)
+### ขั้นตอนการติดตั้ง (Installation)
 
-สามารถดึงเฉพาะ LoRA Adapter น้ำหนักเบา (~14.7 MB) จาก Hugging Face ไปใช้งานร่วมกับ `scb10x/llama3.2-typhoon2-3b` ได้ทันทีโดยไม่ต้องโหลดไฟล์ทั้งหมดของโปรเจกต์:
+```bash
+# 1. Clone คลังโปรเจกต์
+git clone https://github.com/PlamGG/thai-legal-rag.git
+cd thai-legal-rag
+
+# 2. ติดตั้ง Dependencies ทั้งหมด
+pip install -r requirements.txt
+```
+
+---
+
+### วิธีที่ 1: รันระบบแชทบอทผ่าน Gradio Web UI (Ready-to-Use)
+
+เนื่องจากโปรเจกต์นี้ได้จัดเตรียมคลังมาตรากฎหมาย (Corpus 4,545 มาตรา) และเวกเตอร์ดัชนี ChromaDB ไว้ในโฟลเดอร์ `data/` เรียบร้อยแล้ว ผู้ใช้จึงสามารถสั่งรันระบบได้ทันที:
+
+```bash
+python app.py
+```
+เปิดเบราว์เซอร์ไปที่ `http://127.0.0.1:7860`
+> 💡 **หมายเหตุสำหรับการรันครั้งแรก:** ระบบจะดาวน์โหลด LoRA Adapter จาก Hugging Face Hub (`DuckerMaster/thai-legal-lora`) ให้อัตโนมัติ (ขนาดไฟล์เพียง ~14.7 MB) และหากมีโฟลเดอร์ `data/trained_lora_model` อยู่แล้ว ระบบจะโหลดมาใช้งานทันทีแบบ Offline 100%
+
+---
+
+### วิธีที่ 2: ดึง LoRA จาก Hugging Face ไปทดลองในโค้ดของคุณเอง (Direct Load)
+
+หากต้องการนำเฉพาะ LoRA Adapter ไปทดลองบน Google Colab, Kaggle หรือสคริปต์ของตนเองโดยไม่ต้อง Clone ทั้งโปรเจกต์:
 
 ```python
 import torch
@@ -120,7 +147,7 @@ from peft import PeftModel
 base_model_id = "scb10x/llama3.2-typhoon2-3b"
 lora_adapter_id = "DuckerMaster/thai-legal-lora"
 
-# 1. โหลด Base Model แบบ 4-bit NF4
+# 1. โหลด Base Model แบบ 4-bit NormalFloat (NF4)
 bnb_config = BitsAndBytesConfig(
     load_in_4bit=True,
     bnb_4bit_quant_type="nf4",
@@ -140,28 +167,32 @@ model = PeftModel.from_pretrained(base_model, lora_adapter_id)
 model.eval()
 
 # 3. ทดสอบการตอบคำถามตาม Prompt Format ที่ผ่านการเทรน
-context = "ประมวลกฎหมายแพ่งและพาณิชย์ มาตรา 1012: อันว่าสัญญาจัดตั้งห้างหุ้นส่วนหรือบริษัทนั้น คือสัญญาซึ่งบุคคลตั้งแต่สองคนขึ้นไปตกลงเข้ากันเพื่อกระทำกิจการร่วมกัน ด้วยประสงค์จะแบ่งปันกำไรอันจะพึงได้แต่กิจการที่ทำนั้น"
+context = (
+    "ประมวลกฎหมายแพ่งและพาณิชย์ มาตรา 1012: "
+    "อันว่าสัญญาจัดตั้งห้างหุ้นส่วนหรือบริษัทนั้น คือสัญญาซึ่งบุคคลตั้งแต่สองคนขึ้นไปตกลงเข้ากันเพื่อกระทำกิจการร่วมกัน "
+    "ด้วยประสงค์จะแบ่งปันกำไรอันจะพึงได้แต่กิจการที่ทำนั้น"
+)
 question = "สัญญาจัดตั้งห้างหุ้นส่วนหรือบริษัทคืออะไร"
 
 prompt = f"จากกฎหมายต่อไปนี้:\n{context}\n\nคำถาม: {question}\nคำตอบ:"
 inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
 with torch.no_grad():
-    outputs = model.generate(**inputs, max_new_tokens=200, do_sample=False, repetition_penalty=1.1)
+    outputs = model.generate(
+        **inputs,
+        max_new_tokens=256,
+        do_sample=False,
+        temperature=None,
+        top_p=None,
+        repetition_penalty=1.1,
+        pad_token_id=tokenizer.eos_token_id,
+        eos_token_id=tokenizer.eos_token_id
+    )
 
-print(tokenizer.decode(outputs[0], skip_special_tokens=True).split("คำตอบ:")[-1].strip())
+response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+answer = response.split("คำตอบ:")[-1].strip()
+print("คำวินิจฉัย:", answer)
 ```
-
----
-
-### 2. รันระบบแชทบอทได้ทันที (Ready-to-Use Web UI)
-
-เนื่องจากโปรเจกต์นี้ได้จัดเตรียมคลังมาตรากฎหมาย (Corpus 4,545 มาตรา) และเวกเตอร์ดัชนี ChromaDB ไว้ในโฟลเดอร์ `data/` เรียบร้อยแล้ว ผู้ใช้จึงสามารถรันระบบแชทบอทได้ทันทีโดยไม่ต้องเสียเวลาดาวน์โหลดและสร้าง Index ใหม่:
-
-```bash
-python app.py
-```
-เปิดเบราว์เซอร์ไปที่ `http://127.0.0.1:7860` ระบบจะโหลด LoRA Adapter จากโฟลเดอร์ภายในเครื่อง (`./data/trained_lora_model`) โดยอัตโนมัติ (หรือดาวน์โหลดจาก Hugging Face Hub `DuckerMaster/thai-legal-lora` หากไม่พบไฟล์ในเครื่อง) พร้อมใช้งานทันทีแบบ Offline
 
 ---
 
