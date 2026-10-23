@@ -7,19 +7,16 @@ env/
 venv/
 .hf_cache/
 
-# Large Datasets & Model Weights (Do NOT push to Git)
-data/
+# Do NOT push model weights to Git (Loaded from Hugging Face instead)
+data/trained_lora_model/
 *.safetensors
-*.bin
-*.sqlite3
-*.index
-*.pkl
 
 # UI & Logs
 .gradio/
 *.log
 eval_results.json
 ab_eval_results.json
+huggingface_model_card.txt
 
 # OS & IDE
 .DS_Store
